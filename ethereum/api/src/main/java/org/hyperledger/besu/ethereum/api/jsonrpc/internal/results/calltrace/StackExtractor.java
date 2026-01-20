@@ -85,6 +85,21 @@ public final class StackExtractor {
   }
 
   /**
+   * Extracts the value (wei) being transferred in a CREATE or CREATE2 operation. Stack layout for
+   * CREATE: value, offset, size (value is 3rd from top)
+   *
+   * @param frame the trace frame containing the stack
+   * @return the value as a hex string, or "0x0" if not available
+   */
+  public static String extractCreateValue(final TraceFrame frame) {
+    return frame
+        .getStack()
+        .filter(stack -> stack.length >= 3) // CREATE has at least 3 items: value, offset, size
+        .map(stack -> Wei.wrap(stack[stack.length - 3]).toShortHexString())
+        .orElse(ZERO_VALUE);
+  }
+
+  /**
    * Extracts the target address from a CALL operation's stack.
    *
    * @param frame the trace frame containing the stack

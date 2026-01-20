@@ -32,8 +32,6 @@ import java.util.List;
 import java.util.Map;
 
 import org.apache.tuweni.bytes.Bytes;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Converts Ethereum transaction traces into a hierarchical call tracer format.
@@ -52,7 +50,6 @@ import org.slf4j.LoggerFactory;
  * </ul>
  */
 public class CallTracerResultConverter {
-  private static final Logger LOG = LoggerFactory.getLogger(CallTracerResultConverter.class);
 
   // Operation type constants
   private static final String CALL_TYPE = "CALL";
@@ -190,26 +187,13 @@ public class CallTracerResultConverter {
     }
 
     // Handle CREATE contract address
+    // Only set 'to' if CREATE succeeded (no REVERT or exceptional halt)
     if (OpcodeCategory.isCreateOp(childCallInfo.builder.getType())
         && frame.getDepth() > 0
-        && childCallInfo.builder.getTo() == null) {
-
-      LOG.info("=== BUG2 INVESTIGATION: processReturn for CREATE ===");
-      LOG.info("Opcode: {}", opcode);
-      LOG.info("Depth: {}", frame.getDepth());
-      LOG.info("Return opcode: {}", opcode);
-      LOG.info("Is REVERT: {}", OpcodeCategory.isRevertOp(opcode));
-      LOG.info("ExceptionalHaltReason present: {}", frame.getExceptionalHaltReason().isPresent());
-      if (frame.getExceptionalHaltReason().isPresent()) {
-        LOG.info("ExceptionalHaltReason: {}", frame.getExceptionalHaltReason().get().getDescription());
-      }
-      LOG.info("Recipient (computed contract address): {}", frame.getRecipient().toHexString());
-
+        && childCallInfo.builder.getTo() == null
+        && frame.getExceptionalHaltReason().isEmpty()
+        && !OpcodeCategory.isRevertOp(opcode)) {
       childCallInfo.builder.to(frame.getRecipient().toHexString());
-
-      LOG.warn("=== BUG2: Set 'to' address BEFORE checking if CREATE succeeded ===");
-      LOG.warn("This is the bug! Address will remain even if REVERT happens next.");
-      LOG.info("=== END BUG2 INVESTIGATION ===\n");
     }
 
     // Set output and error status
@@ -239,47 +223,18 @@ public class CallTracerResultConverter {
       final CallTracerResult.Builder childBuilder,
       final CallInfo parentCallInfo) {
 
-    LOG.info("=== BUG1 INVESTIGATION: handleNonEnteredCall ===");
-    LOG.info("Opcode: {}", opcode);
-    LOG.info("Depth: {}", frame.getDepth());
-    LOG.info("ExceptionalHaltReason present: {}", frame.getExceptionalHaltReason().isPresent());
-    if (frame.getExceptionalHaltReason().isPresent()) {
-      LOG.info("ExceptionalHaltReason: {}", frame.getExceptionalHaltReason().get().getDescription());
-    }
-    LOG.info("SoftFailureReason present: {}", frame.getSoftFailureReason().isPresent());
-    if (frame.getSoftFailureReason().isPresent()) {
-      LOG.info("SoftFailureReason: {}", frame.getSoftFailureReason().get().getDescription());
-    }
-    LOG.info("Frame value: {}", frame.getValue().toShortHexString());
-    LOG.info("Gas remaining: {}", frame.getGasRemaining());
-
     // Check for soft failure vs hard failure
     if (frame.getExceptionalHaltReason().isPresent()) {
-      LOG.info("Taking HARD FAILURE path");
       CallTracerErrorHandler.handleHardFailure(frame, opcode, childBuilder);
     } else if (frame.getSoftFailureReason().isPresent()) {
-      LOG.info("Taking SOFT FAILURE path");
       CallTracerErrorHandler.handleSoftFailure(frame, opcode, childBuilder);
     } else {
-      LOG.warn("=== BUG1: Taking UNKNOWN FAILURE path - NO ERROR WILL BE SET ===");
-      LOG.warn("This is the bug! No error message will be added to the call trace.");
-      LOG.warn("Stack available: {}", frame.getStack().isPresent());
-      if (frame.getStack().isPresent()) {
-        LOG.warn("Stack size: {}", frame.getStack().get().length);
-        if (frame.getStack().get().length >= 3 && OpcodeCategory.isCreateOp(opcode)) {
-          LOG.warn("CREATE value from stack (3rd from top): {}",
-              org.hyperledger.besu.datatypes.Wei.wrap(frame.getStack().get()[frame.getStack().get().length - 3]).toShortHexString());
-        }
-      }
-
       // Unknown failure type - no error message
       childBuilder.gasUsed(0L);
       if (OpcodeCategory.isCreateOp(opcode)) {
         childBuilder.to(null);
       }
     }
-
-    LOG.info("=== END BUG1 INVESTIGATION ===\n");
 
     // Add to parent immediately
     if (parentCallInfo != null) {
@@ -375,23 +330,7 @@ public class CallTracerResultConverter {
     }
 
     if (OpcodeCategory.isCreateOp(opcode)) {
-      LOG.info("=== BUG3 INVESTIGATION: getCallValue for CREATE ===");
-      LOG.info("Opcode: {}", opcode);
-      LOG.info("Depth: {}", frame.getDepth());
-      LOG.info("frame.getValue(): {}", frame.getValue().toShortHexString());
-
-      String valueFromStack = ZERO_VALUE;
-      if (frame.getStack().isPresent() && frame.getStack().get().length >= 3) {
-        valueFromStack = org.hyperledger.besu.datatypes.Wei.wrap(
-            frame.getStack().get()[frame.getStack().get().length - 3]).toShortHexString();
-        LOG.info("Value from stack (3rd from top): {}", valueFromStack);
-        LOG.warn("=== BUG3: frame.getValue() returns {} but stack has {} ===",
-            frame.getValue().toShortHexString(), valueFromStack);
-        LOG.warn("This is the bug! Should extract from stack like CALL does.");
-      } else {
-        LOG.info("Stack not available or too small for value extraction");
-      }
-      LOG.info("=== END BUG3 INVESTIGATION ===\n");
+      return StackExtractor.extractCreateValue(frame);
     }
 
     return frame.getValue().toShortHexString();
