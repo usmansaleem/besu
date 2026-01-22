@@ -192,7 +192,7 @@ public class CallTracerResultConverter {
         && childCallInfo.builder.getTo() == null
         && frame.getExceptionalHaltReason().isEmpty()
         && !OpcodeCategory.isRevertOp(opcode)) {
-      childCallInfo.builder.to(frame.getRecipient().toHexString());
+      childCallInfo.builder.to(frame.getRecipient().getBytes().toHexString());
     }
 
     // Set output and error status
