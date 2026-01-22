@@ -115,7 +115,8 @@ public final class StackExtractor {
             stack ->
                 stack.length >= CALL_STACK_TO_OFFSET
                     && stack[stack.length - CALL_STACK_TO_OFFSET] != null)
-        .map(stack -> toAddress(stack[stack.length - CALL_STACK_TO_OFFSET]).toHexString())
+        .map(
+            stack -> toAddress(stack[stack.length - CALL_STACK_TO_OFFSET]).getBytes().toHexString())
         .orElse(null);
   }
 
