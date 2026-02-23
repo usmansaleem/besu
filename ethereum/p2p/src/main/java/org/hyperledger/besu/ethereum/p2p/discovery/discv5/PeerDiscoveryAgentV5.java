@@ -154,14 +154,46 @@ public final class PeerDiscoveryAgentV5 implements PeerDiscoveryAgent {
         new DiscoverySystemBuilder()
             .signer(new LocalNodeKeySigner(nodeKey))
             .localNodeRecord(localNodeRecord)
-            .localNodeRecordListener((previous, updated) -> nodeRecordManager.updateNodeRecord())
+            .localNodeRecordListener(
+                (previous, updated) -> {
+                  // When onBoundPortResolved resolves ephemeral (port 0) UDP ports, propagate
+                  // the actual ports to NodeRecordManager so the on-disk ENR stays correct.
+                  final Optional<Integer> ipv4ResolvedPort =
+                      hasEphemeralPort(previous.getUdpAddress())
+                          ? updated
+                              .getUdpAddress()
+                              .filter(a -> a.getPort() != 0)
+                              .map(InetSocketAddress::getPort)
+                          : Optional.empty();
+                  final Optional<Integer> ipv6ResolvedPort =
+                      hasEphemeralPort(previous.getUdp6Address())
+                          ? updated
+                              .getUdp6Address()
+                              .filter(a -> a.getPort() != 0)
+                              .map(InetSocketAddress::getPort)
+                          : Optional.empty();
+                  if (ipv4ResolvedPort.isPresent() || ipv6ResolvedPort.isPresent()) {
+                    nodeRecordManager.onDiscoveryPortResolved(ipv4ResolvedPort, ipv6ResolvedPort);
+                  }
+                  // In dual-stack mode both UDP servers bind concurrently, each firing this
+                  // listener once.  Defer the on-disk ENR write until the updated library
+                  // record shows no remaining port-0 UDP addresses, so the seq counter only
+                  // increments once for the combined port-resolution event.
+                  final boolean udpStillPending = hasEphemeralPort(updated.getUdpAddress());
+                  final boolean udp6StillPending = hasEphemeralPort(updated.getUdp6Address());
+                  if (!udpStillPending && !udp6StillPending) {
+                    nodeRecordManager.updateNodeRecord();
+                  }
+                })
             // Reject external address changes suggested by peers — Besu manages its own
             // advertised address via configuration.
             // TODO: confirm intent with original contributor; previously returned
             // Optional.of(nodeRecord) which accepted the call but stored the old record
             // unchanged (a silent no-op). Changed to Optional.empty() to correctly reject.
             .newAddressHandler((nodeRecord, newAddress) -> Optional.empty())
-            // TODO Integrate address filtering based on peer permissions
+            // Address filtering based on peer permissions is not yet integrated; all addresses
+            // are currently allowed. This will be addressed in
+            // https://github.com/hyperledger/besu/issues/9688
             .addressAccessPolicy(AddressAccessPolicy.ALLOW_ALL);
 
     if (discoveryConfig.isDualStackEnabled()) {
@@ -318,6 +350,11 @@ public final class PeerDiscoveryAgentV5 implements PeerDiscoveryAgent {
     return system
         .lookupNode(peerId.getId())
         .map(nr -> DiscoveryPeerFactory.fromNodeRecord(nr, preferIpv6Outbound));
+  }
+
+  /** Returns {@code true} if the address is present and bound to an ephemeral (port 0) port. */
+  private static boolean hasEphemeralPort(final Optional<InetSocketAddress> address) {
+    return address.map(a -> a.getPort() == 0).orElse(false);
   }
 
   /** Determines whether the RLPx agent has reached a sufficient number of connected peers. */
