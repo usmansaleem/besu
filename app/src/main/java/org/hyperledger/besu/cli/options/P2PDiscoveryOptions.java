@@ -18,6 +18,7 @@ import org.hyperledger.besu.cli.DefaultCommandValues;
 import org.hyperledger.besu.cli.converter.PercentageConverter;
 import org.hyperledger.besu.cli.converter.SubnetCidrConverter;
 import org.hyperledger.besu.cli.util.CommandLineUtils;
+import org.hyperledger.besu.ethereum.p2p.config.DiscoveryMode;
 import org.hyperledger.besu.ethereum.p2p.discovery.P2PDiscoveryConfiguration;
 import org.hyperledger.besu.ethereum.p2p.peers.EnodeURLImpl;
 import org.hyperledger.besu.util.NetworkUtility;
@@ -81,6 +82,17 @@ public class P2PDiscoveryOptions implements CLIOptions<P2PDiscoveryConfiguration
       arity = "1")
   public final Boolean peerDiscoveryEnabled = true;
 
+  /** Selects which discovery protocol(s) the node runs. */
+  @CommandLine.Option(
+      names = {"--discovery-mode"},
+      description =
+          "Discovery protocol(s) to run: BOTH (default), V5, or V4. "
+              + "BOTH runs DiscV4 and DiscV5 concurrently on a shared UDP socket. "
+              + "V5 runs only DiscV5 (requires a secp256k1 node key; falls back to V4 if unsupported). "
+              + "V4 runs only DiscV4.",
+      defaultValue = "BOTH")
+  public DiscoveryMode discoveryMode = DiscoveryMode.BOTH;
+
   /**
    * A list of bootstrap nodes can be passed and a hardcoded list will be used otherwise by the
    * Runner.
@@ -90,9 +102,7 @@ public class P2PDiscoveryOptions implements CLIOptions<P2PDiscoveryConfiguration
       names = {"--bootnodes"},
       paramLabel = "<enode://id@host:port>|<enr:base64Enr>",
       description =
-          "Comma separated enode or ENR URLs for P2P discovery bootstrap. "
-              + "Must be either all enode URLs (discovery V4) or all ENR URLs (discovery V5). "
-              + "Default is a predefined list.",
+          "Comma separated enode URLs (DiscV4) and/or ENR strings (DiscV5) for P2P discovery bootstrap. Defaults to genesis-provided bootnodes.",
       split = ",",
       arity = "0..*")
   public final List<String> bootNodes = null;
@@ -271,6 +281,7 @@ public class P2PDiscoveryOptions implements CLIOptions<P2PDiscoveryConfiguration
     return new P2PDiscoveryConfiguration(
         p2pEnabled,
         peerDiscoveryEnabled,
+        discoveryMode,
         p2pHost,
         p2pInterface,
         p2pPort,
@@ -338,20 +349,19 @@ public class P2PDiscoveryOptions implements CLIOptions<P2PDiscoveryConfiguration
   private void validateP2PInterface(
       final CommandLine commandLine, final NetworkInterfaceChecker networkInterfaceChecker) {
     validateInterface(commandLine, networkInterfaceChecker, p2pInterface, "--p2p-interface");
+    if (!NetworkUtility.isIpV4Address(p2pInterface)
+        && !NetworkUtility.INADDR_ANY.equals(p2pInterface)) {
+      throw new CommandLine.ParameterException(
+          commandLine,
+          "--p2p-interface must be an IPv4 address or 0.0.0.0. "
+              + "For IPv6 interface configuration use --p2p-interface-ipv6. "
+              + "IPv6-only mode is not supported. Was: "
+              + p2pInterface);
+    }
     if (p2pInterfaceIpv6 != null) {
       validateInterface(
           commandLine, networkInterfaceChecker, p2pInterfaceIpv6, "--p2p-interface-ipv6");
       validateIpv6Address(commandLine, p2pInterfaceIpv6, "--p2p-interface-ipv6");
-
-      // Enforce primary must be IPv4 when IPv6 is also specified (dual-stack)
-      if (!NetworkUtility.isIpV4Address(p2pInterface)
-          && !NetworkUtility.INADDR_ANY.equals(p2pInterface)) {
-        throw new CommandLine.ParameterException(
-            commandLine,
-            "When --p2p-interface-ipv6 is specified for dual-stack configuration, "
-                + "--p2p-interface must be an IPv4 address or 0.0.0.0, but was: "
-                + p2pInterface);
-      }
     }
   }
 
@@ -372,18 +382,17 @@ public class P2PDiscoveryOptions implements CLIOptions<P2PDiscoveryConfiguration
 
   private void validateP2PHost(final CommandLine commandLine) {
     validateHost(commandLine, p2pHost, "--p2p-host");
+    if (!NetworkUtility.isIpV4Address(p2pHost)) {
+      throw new CommandLine.ParameterException(
+          commandLine,
+          "--p2p-host must be an IPv4 address. "
+              + "For dual-stack IPv4+IPv6 configuration use --p2p-host-ipv6 for the IPv6 address. "
+              + "IPv6-only mode is not supported. Was: "
+              + p2pHost);
+    }
     if (p2pHostIpv6 != null) {
       validateHost(commandLine, p2pHostIpv6, "--p2p-host-ipv6");
       validateIpv6Address(commandLine, p2pHostIpv6, "--p2p-host-ipv6");
-
-      // Enforce primary must be IPv4 when IPv6 is also specified (dual-stack)
-      if (!NetworkUtility.isIpV4Address(p2pHost)) {
-        throw new CommandLine.ParameterException(
-            commandLine,
-            "When --p2p-host-ipv6 is specified for dual-stack configuration, "
-                + "--p2p-host must be an IPv4 address, but was: "
-                + p2pHost);
-      }
     }
   }
 

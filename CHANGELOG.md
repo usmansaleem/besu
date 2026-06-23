@@ -8,6 +8,7 @@
     - Remove PoW mining infrastructure: PoW mining coordinator, executor, block creator/miner, nonce generators, PoW solver, and PoWObserver are deleted. `nonceGenerator` is removed from `MiningConfiguration`. Mainnet genesis files with `ethash` config can no longer mine PoW blocks. [#10656](https://github.com/besu-eth/besu/issues/10656)
     - Remove Ethash and PoW validation code: EthHash algorithm, PoWHasher, ProofOfWorkValidationRule, CalculatedDifficultyValidationRule, EpochCalculator, and DirectAcyclicGraphSeed are deleted. `powHasher` is removed from `ProtocolSpec`/`ProtocolSpecBuilder`. [#10659](https://github.com/besu-eth/besu/issues/10659)
     - Remove PoW RPC methods: `miner_start`, `miner_stop`, and `eth_mining` JSON-RPC methods are removed. `getCoinbase()` and `setCoinbase()` are removed from the `MiningCoordinator` interface. [#10662](https://github.com/besu-eth/besu/issues/10662)
+- Discovery: Besu now runs DiscV4 and DiscV5 concurrently on a shared UDP socket. The experimental `--Xv5-discovery-enabled` flag is removed; use the new `--discovery-mode` option instead (see Additions and Improvements). `--bootnodes` accepts a mixed list of `enode://...` and `enr:...` entries; the genesis `v5bootnodes` JSON key is dropped and any prior entries are merged into the unified `bootnodes` array. [#10624](https://github.com/besu-eth/besu/pull/10624)
 
 ### Upcoming Breaking Changes
 - `--min-block-occupancy-ratio` is deprecated and will be removed in a future release
@@ -26,6 +27,7 @@
 ### Additions and Improvements
 - Upgrade web3j dependencies to 5.0.3 [#10627](https://github.com/besu-eth/besu/pull/10627)
 - Besu now falls back to Proof of Stake when the genesis file declares no consensus mechanism (e.g. an empty `"config": {}`). [#10266](https://github.com/besu-eth/besu/pull/10266)
+- Add `--discovery-mode` CLI option (`BOTH` | `V5` | `V4`, default `BOTH`) to control which discovery protocol(s) the node runs. IPv6 peer reachability requires explicit `--p2p-host-ipv6` configuration; `V4`-only mode is IPv4-only by design. [#10624](https://github.com/besu-eth/besu/pull/10624)
 
 ## 26.6.1
 

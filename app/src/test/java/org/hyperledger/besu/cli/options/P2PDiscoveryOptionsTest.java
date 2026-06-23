@@ -17,9 +17,11 @@ package org.hyperledger.besu.cli.options;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 
 import org.hyperledger.besu.cli.CommandTestAbstract;
+import org.hyperledger.besu.ethereum.p2p.config.DiscoveryMode;
 
 import java.util.Optional;
 
@@ -95,19 +97,15 @@ public class P2PDiscoveryOptionsTest extends CommandTestAbstract {
   }
 
   @Test
-  public void p2pHostMayBeIPv6() {
-
+  public void p2pHostMustBeIPv4() {
     final String host = "2600:DB8::8545";
     parseCommand("--p2p-host", host);
 
-    verify(mockRunnerBuilder).p2pAdvertisedHost(stringArgumentCaptor.capture());
-    verify(mockRunnerBuilder).preferIpv6Outbound(anyBoolean());
-    verify(mockRunnerBuilder).build();
-
-    assertThat(stringArgumentCaptor.getValue()).isEqualTo(host);
-
     assertThat(commandOutput.toString(UTF_8)).isEmpty();
-    assertThat(commandErrorOutput.toString(UTF_8)).isEmpty();
+    assertThat(commandErrorOutput.toString(UTF_8))
+        .contains("--p2p-host must be an IPv4 address")
+        .contains("--p2p-host-ipv6")
+        .contains(host);
   }
 
   @Test
@@ -165,23 +163,20 @@ public class P2PDiscoveryOptionsTest extends CommandTestAbstract {
 
     assertThat(commandOutput.toString(UTF_8)).isEmpty();
     assertThat(commandErrorOutput.toString(UTF_8))
-        .contains("When --p2p-host-ipv6 is specified for dual-stack configuration")
         .contains("--p2p-host must be an IPv4 address")
         .contains(ipv6Primary);
   }
 
   @Test
-  public void ipv6OnlyConfigurationIsValid() {
+  public void ipv6OnlyConfigurationIsRejected() {
     final String ipv6Host = "2001:db8::1";
     parseCommand("--p2p-host", ipv6Host);
 
-    verify(mockRunnerBuilder).p2pAdvertisedHost(stringArgumentCaptor.capture());
-    verify(mockRunnerBuilder).preferIpv6Outbound(anyBoolean());
-    verify(mockRunnerBuilder).build();
-
-    assertThat(stringArgumentCaptor.getValue()).isEqualTo(ipv6Host);
     assertThat(commandOutput.toString(UTF_8)).isEmpty();
-    assertThat(commandErrorOutput.toString(UTF_8)).isEmpty();
+    assertThat(commandErrorOutput.toString(UTF_8))
+        .contains("--p2p-host must be an IPv4 address")
+        .contains("IPv6-only mode is not supported")
+        .contains(ipv6Host);
   }
 
   @Test
@@ -219,7 +214,6 @@ public class P2PDiscoveryOptionsTest extends CommandTestAbstract {
 
     assertThat(commandOutput.toString(UTF_8)).isEmpty();
     assertThat(commandErrorOutput.toString(UTF_8))
-        .contains("When --p2p-interface-ipv6 is specified for dual-stack configuration")
         .contains("--p2p-interface must be an IPv4 address or 0.0.0.0")
         .contains(ipv6Primary);
   }
@@ -296,6 +290,39 @@ public class P2PDiscoveryOptionsTest extends CommandTestAbstract {
     assertThat(stringArgumentCaptor.getValue()).isEqualTo(ipv4Host);
     // No IPv6 options specified, so interface-ipv6 should be empty
     assertThat(optionalStringArgumentCaptor.getValue()).isEmpty();
+
+    assertThat(commandOutput.toString(UTF_8)).isEmpty();
+    assertThat(commandErrorOutput.toString(UTF_8)).isEmpty();
+  }
+
+  @Test
+  public void discoveryModeDefaultIsBoth() {
+    parseCommand();
+
+    verify(mockRunnerBuilder).discoveryMode(eq(DiscoveryMode.BOTH));
+    verify(mockRunnerBuilder).build();
+
+    assertThat(commandOutput.toString(UTF_8)).isEmpty();
+    assertThat(commandErrorOutput.toString(UTF_8)).isEmpty();
+  }
+
+  @Test
+  public void discoveryModeCanBeSetToV4() {
+    parseCommand("--discovery-mode", "V4");
+
+    verify(mockRunnerBuilder).discoveryMode(eq(DiscoveryMode.V4));
+    verify(mockRunnerBuilder).build();
+
+    assertThat(commandOutput.toString(UTF_8)).isEmpty();
+    assertThat(commandErrorOutput.toString(UTF_8)).isEmpty();
+  }
+
+  @Test
+  public void discoveryModeCanBeSetToV5() {
+    parseCommand("--discovery-mode", "V5");
+
+    verify(mockRunnerBuilder).discoveryMode(eq(DiscoveryMode.V5));
+    verify(mockRunnerBuilder).build();
 
     assertThat(commandOutput.toString(UTF_8)).isEmpty();
     assertThat(commandErrorOutput.toString(UTF_8)).isEmpty();
