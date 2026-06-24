@@ -160,10 +160,7 @@ public final class SharedDiscoveryTransport {
             pkt.content().readBytes(data);
             env.put(Field.INCOMING, Bytes.wrap(data));
             env.put(Field.REMOTE_SENDER, pkt.sender());
-            final Sinks.EmitResult result = v5Sink.tryEmitNext(env);
-            if (result.isFailure()) {
-              LOG.trace("V5 sink rejected envelope ({}); likely shutdown race", result);
-            }
+            v5Sink.tryEmitNext(env);
           } finally {
             pkt.release();
           }
