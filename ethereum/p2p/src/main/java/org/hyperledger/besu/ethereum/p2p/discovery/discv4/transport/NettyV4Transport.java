@@ -177,10 +177,6 @@ public final class NettyV4Transport implements V4Transport {
               : StandardProtocolFamily.INET;
       ch = sharedTransport.getChannel(family).orElse(null);
       if (ch == null || !ch.isActive()) {
-        LOG.trace(
-            "No {} channel available to send to {}; skipping",
-            family == StandardProtocolFamily.INET6 ? "IPv6" : "IPv4",
-            recipient);
         return CompletableFuture.completedFuture(null);
       }
     } else {
