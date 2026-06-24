@@ -14,6 +14,11 @@
  */
 package org.hyperledger.besu.ethereum.p2p.discovery.transport;
 
+import org.hyperledger.besu.metrics.BesuMetricCategory;
+import org.hyperledger.besu.plugin.services.MetricsSystem;
+import org.hyperledger.besu.plugin.services.metrics.Counter;
+import org.hyperledger.besu.plugin.services.metrics.LabelledMetric;
+
 import java.net.InetSocketAddress;
 import java.net.StandardProtocolFamily;
 import java.util.ArrayList;
@@ -57,6 +62,15 @@ public final class SharedDiscoveryTransport {
 
   private static final Logger LOG = LoggerFactory.getLogger(SharedDiscoveryTransport.class);
 
+  private static final Counter NO_OP_COUNTER =
+      new Counter() {
+        @Override
+        public void inc() {}
+
+        @Override
+        public void inc(final long amount) {}
+      };
+
   private final InetSocketAddress ipv4BindAddress;
   private final Optional<InetSocketAddress> ipv6BindAddress;
   private final byte[] maskingKey;
@@ -65,6 +79,10 @@ public final class SharedDiscoveryTransport {
 
   private static final Sinks.EmitFailureHandler RETRY_ON_CONCURRENT =
       (signalType, result) -> result == Sinks.EmitResult.FAIL_NON_SERIALIZED;
+
+  private final Counter demuxV4Counter;
+  private final Counter demuxV5Counter;
+  private final Counter demuxDroppedCounter;
 
   private final EventLoopGroup eventLoopGroup;
 
@@ -100,6 +118,22 @@ public final class SharedDiscoveryTransport {
             1,
             (ThreadFactory) r -> new Thread(r, "disc-shared-eventloop"),
             NioIoHandler.newFactory());
+
+    if (builder.metricsSystem != null) {
+      final LabelledMetric<Counter> demuxCounter =
+          builder.metricsSystem.createLabelledCounter(
+              BesuMetricCategory.NETWORK,
+              "discovery_demux_packets_total",
+              "UDP packets demultiplexed by discovery protocol",
+              "protocol");
+      this.demuxV4Counter = demuxCounter.labels(DemuxProtocol.V4.label());
+      this.demuxV5Counter = demuxCounter.labels(DemuxProtocol.V5.label());
+      this.demuxDroppedCounter = demuxCounter.labels(DemuxProtocol.DROPPED.label());
+    } else {
+      this.demuxV4Counter = NO_OP_COUNTER;
+      this.demuxV5Counter = NO_OP_COUNTER;
+      this.demuxDroppedCounter = NO_OP_COUNTER;
+    }
   }
 
   /** Registers the V4 inbound handler. Called by {@code NettyV4Transport} before start. */
@@ -187,7 +221,10 @@ public final class SharedDiscoveryTransport {
                             v5Enabled,
                             v5Enabled ? maskingKey : null,
                             v4Enabled ? v4Sink : null,
-                            v5Enabled ? v5PacketSink : null));
+                            v5Enabled ? v5PacketSink : null,
+                            demuxV4Counter,
+                            demuxV5Counter,
+                            demuxDroppedCounter));
               }
             })
         .bind(bindAddr)
@@ -288,6 +325,7 @@ public final class SharedDiscoveryTransport {
     private byte[] maskingKey;
     private boolean v4Enabled = false;
     private boolean v5Enabled = false;
+    private MetricsSystem metricsSystem;
 
     private Builder() {}
 
@@ -313,6 +351,11 @@ public final class SharedDiscoveryTransport {
 
     public Builder v5Enabled(final boolean enabled) {
       this.v5Enabled = enabled;
+      return this;
+    }
+
+    public Builder metricsSystem(final MetricsSystem metricsSystem) {
+      this.metricsSystem = metricsSystem;
       return this;
     }
 

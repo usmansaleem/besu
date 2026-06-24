@@ -39,6 +39,7 @@ import org.hyperledger.besu.ethereum.p2p.peers.EnodeURLImpl;
 import org.hyperledger.besu.ethereum.p2p.peers.MaintainedPeers;
 import org.hyperledger.besu.ethereum.p2p.peers.Peer;
 import org.hyperledger.besu.ethereum.p2p.peers.PeerTestHelper;
+import org.hyperledger.besu.ethereum.p2p.rlpx.ConnectSource;
 import org.hyperledger.besu.ethereum.p2p.rlpx.RlpxAgent;
 import org.hyperledger.besu.ethereum.p2p.rlpx.connections.MockPeerConnection;
 import org.hyperledger.besu.ethereum.p2p.rlpx.wire.MockSubProtocol;
@@ -111,7 +112,7 @@ public final class DefaultP2PNetworkTest {
     assertThat(network.addMaintainedConnectionPeer(peer)).isTrue();
 
     assertThat(maintainedPeers.contains(peer)).isTrue();
-    verify(rlpxAgent).connect(peer);
+    verify(rlpxAgent).connect(peer, ConnectSource.ADMIN);
     verify(discoveryAgent).addPeer(peer);
   }
 
@@ -123,7 +124,7 @@ public final class DefaultP2PNetworkTest {
 
     assertThat(network.addMaintainedConnectionPeer(peer)).isTrue();
     assertThat(network.addMaintainedConnectionPeer(peer)).isFalse();
-    verify(rlpxAgent, times(2)).connect(peer);
+    verify(rlpxAgent, times(2)).connect(peer, ConnectSource.ADMIN);
     verify(discoveryAgent, times(2)).addPeer(peer);
     assertThat(maintainedPeers.contains(peer)).isTrue();
   }
@@ -138,7 +139,7 @@ public final class DefaultP2PNetworkTest {
     assertThat(network.removeMaintainedConnectionPeer(peer)).isTrue();
 
     assertThat(maintainedPeers.contains(peer)).isFalse();
-    verify(rlpxAgent).connect(peer);
+    verify(rlpxAgent).connect(peer, ConnectSource.ADMIN);
     verify(discoveryAgent).addPeer(peer);
     verify(rlpxAgent).disconnect(peer.getId(), DisconnectReason.REQUESTED);
     verify(discoveryAgent).dropPeer(peer);
@@ -166,10 +167,10 @@ public final class DefaultP2PNetworkTest {
     final Peer selfPeer = PeerTestHelper.createPeer(maybeSelfEnode.get());
     maintainedPeers.add(selfPeer);
 
-    verify(rlpxAgent, times(0)).connect(selfPeer);
+    verify(rlpxAgent, times(0)).connect(eq(selfPeer), any(ConnectSource.class));
 
     network.checkMaintainedConnectionPeers();
-    verify(rlpxAgent, times(0)).connect(selfPeer);
+    verify(rlpxAgent, times(0)).connect(eq(selfPeer), any(ConnectSource.class));
   }
 
   @Test
@@ -181,10 +182,10 @@ public final class DefaultP2PNetworkTest {
 
     maintainedPeers.add(peer);
 
-    verify(rlpxAgent, times(0)).connect(peer);
+    verify(rlpxAgent, times(0)).connect(peer, ConnectSource.MAINTAIN);
 
     network.checkMaintainedConnectionPeers();
-    verify(rlpxAgent, times(1)).connect(peer);
+    verify(rlpxAgent, times(1)).connect(peer, ConnectSource.MAINTAIN);
   }
 
   @Test
@@ -200,7 +201,7 @@ public final class DefaultP2PNetworkTest {
     when(rlpxAgent.streamActiveConnections())
         .thenReturn(Stream.of(MockPeerConnection.create(peer)));
     network.checkMaintainedConnectionPeers();
-    verify(rlpxAgent, times(0)).connect(peer);
+    verify(rlpxAgent, times(0)).connect(peer, ConnectSource.MAINTAIN);
   }
 
   @Test
@@ -277,7 +278,7 @@ public final class DefaultP2PNetworkTest {
 
     final DefaultP2PNetwork network = network();
     network.attemptPeerConnections();
-    verify(rlpxAgent, times(1)).connect(peerCaptor.capture());
+    verify(rlpxAgent, times(1)).connect(peerCaptor.capture(), eq(ConnectSource.MAINTAIN));
 
     assertThat(peerCaptor.getValue()).isEqualTo(discoPeer);
   }
@@ -290,7 +291,7 @@ public final class DefaultP2PNetworkTest {
 
     final DefaultP2PNetwork network = network();
     network.attemptPeerConnections();
-    verify(rlpxAgent, times(0)).connect(any());
+    verify(rlpxAgent, times(0)).connect(any(), any(ConnectSource.class));
   }
 
   @Test
@@ -303,7 +304,7 @@ public final class DefaultP2PNetworkTest {
 
     final DefaultP2PNetwork network = network();
     network.attemptPeerConnections();
-    verify(rlpxAgent, times(0)).connect(any());
+    verify(rlpxAgent, times(0)).connect(any(), any(ConnectSource.class));
   }
 
   @Test
@@ -319,7 +320,7 @@ public final class DefaultP2PNetworkTest {
 
     final DefaultP2PNetwork network = network();
     network.attemptPeerConnections();
-    verify(rlpxAgent, times(3)).connect(any());
+    verify(rlpxAgent, times(3)).connect(any(), eq(ConnectSource.MAINTAIN));
   }
 
   @Test

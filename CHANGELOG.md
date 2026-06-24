@@ -28,6 +28,7 @@
 - Upgrade web3j dependencies to 5.0.3 [#10627](https://github.com/besu-eth/besu/pull/10627)
 - Besu now falls back to Proof of Stake when the genesis file declares no consensus mechanism (e.g. an empty `"config": {}`). [#10266](https://github.com/besu-eth/besu/pull/10266)
 - Add `--discovery-mode` CLI option (`BOTH` | `V5` | `V4`, default `BOTH`) to control which discovery protocol(s) the node runs. IPv6 peer reachability requires explicit `--p2p-host-ipv6` configuration; `V4`-only mode is IPv4-only by design. [#10624](https://github.com/besu-eth/besu/pull/10624)
+- Add three discovery/networking metrics: `besu_network_discovery_demux_packets_total{protocol=v4|v5|dropped}` counts UDP packets demultiplexed by protocol, `besu_network_discv4_known_peers_current` reports the current DiscV4 routing-table size, and `besu_network_rlpx_outbound_connect_attempts_total{source=discv4|discv5|maintain|admin}` labels outbound RLPx connection attempts by originating source. [#10646](https://github.com/besu-eth/besu/pull/10646)
 
 ## 26.6.1
 
