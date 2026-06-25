@@ -27,6 +27,7 @@
 ### Additions and Improvements
 - Upgrade web3j dependencies to 5.0.3 [#10627](https://github.com/besu-eth/besu/pull/10627)
 - Besu now falls back to Proof of Stake when the genesis file declares no consensus mechanism (e.g. an empty `"config": {}`). [#10266](https://github.com/besu-eth/besu/pull/10266)
+- Add `HealthCheckService` plugin API enabling custom health check implementations. The plugin-based `/readiness` response body is simplified to `{"status":"UP"|"DOWN"}` and no longer includes the previous `{peers, sync}` detail. [#10167](https://github.com/besu-eth/besu/pull/10167)
 - Add `--discovery-mode` CLI option (`BOTH` | `V5` | `V4`, default `BOTH`) to control which discovery protocol(s) the node runs. IPv6 peer reachability requires explicit `--p2p-host-ipv6` configuration; `V4`-only mode is IPv4-only by design. [#10624](https://github.com/besu-eth/besu/pull/10624)
 
 ## 26.6.1
