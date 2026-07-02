@@ -23,6 +23,7 @@ import java.net.InetSocketAddress;
 import java.net.SocketException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.netty.bootstrap.Bootstrap;
@@ -49,6 +50,13 @@ import org.slf4j.LoggerFactory;
 public final class NettyV4Transport implements V4Transport {
 
   private static final Logger LOG = LoggerFactory.getLogger(NettyV4Transport.class);
+
+  // Netty's parameterless shutdownGracefully() defaults to a 2s quiet period (plus a 15s
+  // timeout), unconditionally waited out even when the event loop is already idle. Nothing is
+  // legitimately in flight by the time this transport shuts down its (single-thread, dedicated)
+  // event loop group, so use a much shorter, explicit quiet period/timeout instead.
+  private static final long SHUTDOWN_QUIET_PERIOD_MS = 0;
+  private static final long SHUTDOWN_TIMEOUT_MS = 500;
 
   private final InetSocketAddress bindAddress;
 
@@ -109,7 +117,7 @@ public final class NettyV4Transport implements V4Transport {
     bindFuture.addListener(
         result -> {
           if (!result.isSuccess()) {
-            eventLoopGroup.shutdownGracefully();
+            shutdownEventLoopGroup(eventLoopGroup);
             Throwable cause = result.cause();
             if (cause instanceof BindException || cause instanceof SocketException) {
               cause =
@@ -157,16 +165,28 @@ public final class NettyV4Transport implements V4Transport {
     if (!stopped.compareAndSet(false, true)) {
       return CompletableFuture.completedFuture(null);
     }
+    LOG.info("Stopping DiscV4 UDP transport");
     final EventLoopGroup group = this.eventLoopGroup;
     if (group == null) {
       // start() was never called (e.g. discovery disabled) - nothing to stop.
+      LOG.info("DiscV4 UDP transport was never started; nothing to stop");
       return CompletableFuture.completedFuture(null);
     }
     final NioDatagramChannel ch = this.channel;
     if (ch == null || !ch.isOpen()) {
-      return toFuture(group.shutdownGracefully());
+      return toFuture(shutdownEventLoopGroup(group))
+          .whenComplete((v, ex) -> LOG.info("DiscV4 event loop group shut down"));
     }
-    return toFuture(ch.close()).thenCompose(v -> toFuture(group.shutdownGracefully()));
+    return toFuture(ch.close())
+        .whenComplete((v, ex) -> LOG.info("DiscV4 UDP channel closed"))
+        .thenCompose(v -> toFuture(shutdownEventLoopGroup(group)))
+        .whenComplete((v, ex) -> LOG.info("DiscV4 event loop group shut down"));
+  }
+
+  private static io.netty.util.concurrent.Future<?> shutdownEventLoopGroup(
+      final EventLoopGroup group) {
+    return group.shutdownGracefully(
+        SHUTDOWN_QUIET_PERIOD_MS, SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS);
   }
 
   private static CompletableFuture<Void> toFuture(final io.netty.util.concurrent.Future<?> f) {

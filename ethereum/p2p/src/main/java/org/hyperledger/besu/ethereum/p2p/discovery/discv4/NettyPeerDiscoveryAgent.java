@@ -169,18 +169,22 @@ public class NettyPeerDiscoveryAgent extends PeerDiscoveryAgentV4 {
     if (!stopGate.compareAndSet(false, true)) {
       return CompletableFuture.completedFuture(null);
     }
+    LOG.info("Stopping peer discovery agent");
     return transport
         .stop()
         .handle(
             (v, ex) -> {
               if (ex != null) {
                 LOG.warn("Transport stop failed; continuing with executor shutdown", ex);
+              } else {
+                LOG.info("DiscV4 transport stopped");
               }
               return null;
             })
         .thenCompose(v -> stopControllerOnDispatchThread())
         .whenComplete(
             (v, ex) -> {
+              LOG.info("Peer discovery controller stopped; shutting down executors");
               if (timerScheduler != null) {
                 timerScheduler.shutdownNow();
               }
@@ -191,6 +195,7 @@ public class NettyPeerDiscoveryAgent extends PeerDiscoveryAgentV4 {
                 decodeExecutorService.shutdownNow();
               }
               isStopped = true;
+              LOG.info("Peer discovery agent stopped");
             });
   }
 
