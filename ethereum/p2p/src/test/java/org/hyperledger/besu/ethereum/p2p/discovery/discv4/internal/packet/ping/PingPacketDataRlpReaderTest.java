@@ -15,10 +15,14 @@
 package org.hyperledger.besu.ethereum.p2p.discovery.discv4.internal.packet.ping;
 
 import org.hyperledger.besu.ethereum.p2p.discovery.discv4.Endpoint;
+import org.hyperledger.besu.ethereum.p2p.discovery.discv4.internal.packet.validation.ExpiryValidator;
 import org.hyperledger.besu.ethereum.rlp.BytesValueRLPInput;
 import org.hyperledger.besu.ethereum.rlp.BytesValueRLPOutput;
 
 import java.math.BigInteger;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.Optional;
 
 import org.apache.tuweni.bytes.Bytes;
@@ -29,11 +33,12 @@ import org.junit.jupiter.api.Test;
 
 public class PingPacketDataRlpReaderTest {
 
+  private final Clock clock = Clock.fixed(Instant.ofEpochSecond(123), ZoneId.of("UTC"));
   private PingPacketDataRlpReader reader;
 
   @BeforeEach
   public void beforeTest() {
-    reader = new PingPacketDataRlpReader();
+    reader = new PingPacketDataRlpReader(new ExpiryValidator(clock));
   }
 
   @Test
@@ -78,5 +83,18 @@ public class PingPacketDataRlpReaderTest {
     Assertions.assertTrue(result.getFrom().isEmpty());
     Assertions.assertTrue(result.getTo().isEmpty());
     Assertions.assertEquals(123L, result.getExpiration());
+  }
+
+  @Test
+  public void testReadFrom_expiredPingIsRejected() {
+    // Same payload as testReadFrom, but expiration (123) is before the fixed clock's "now" (200),
+    // so this must be rejected rather than reaching the controller.
+    final Clock expiredClock = Clock.fixed(Instant.ofEpochSecond(200), ZoneId.of("UTC"));
+    reader = new PingPacketDataRlpReader(new ExpiryValidator(expiredClock));
+    String pingHexData = "0xdf05cb840a00000182765f8211d7cb840a00000282765f8222ce7b84075bcd15";
+
+    Assertions.assertThrows(
+        IllegalArgumentException.class,
+        () -> reader.readFrom(new BytesValueRLPInput(Bytes.fromHexString(pingHexData), false)));
   }
 }

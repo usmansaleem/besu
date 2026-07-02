@@ -54,8 +54,11 @@ public class NettyPeerDiscoveryAgent extends PeerDiscoveryAgentV4 {
 
   private static final Logger LOG = LoggerFactory.getLogger(NettyPeerDiscoveryAgent.class);
 
-  private final ScheduledExecutorService timerScheduler;
-  private final ExecutorService cryptoExecutor;
+  // Lazily created on first use (via prepareHandlers(), only reached when config.isEnabled()),
+  // so a node running with discovery disabled doesn't pay for 3 permanently-idle threads.
+  private ScheduledExecutorService timerScheduler;
+  private ExecutorService cryptoExecutor;
+  private ExecutorService decodeExecutorService;
 
   private NettyPeerDiscoveryAgent(
       final NodeKey nodeKey,
@@ -81,11 +84,6 @@ public class NettyPeerDiscoveryAgent extends PeerDiscoveryAgentV4 {
         transport,
         packetSerializer,
         packetDeserializer);
-    this.timerScheduler =
-        Executors.newSingleThreadScheduledExecutor(
-            (ThreadFactory) r -> new Thread(r, "discv4-timers"));
-    this.cryptoExecutor =
-        Executors.newFixedThreadPool(2, (ThreadFactory) r -> new Thread(r, "discv4-crypto"));
     addPeerRequirement(() -> rlpxAgent.getConnectionCount() >= rlpxAgent.getMaxPeers());
   }
 
@@ -118,12 +116,17 @@ public class NettyPeerDiscoveryAgent extends PeerDiscoveryAgentV4 {
 
   @Override
   protected TimerUtil createTimer() {
-    return new ScheduledExecutorTimerUtil(timerScheduler);
+    return new ScheduledExecutorTimerUtil(timerScheduler());
   }
 
   @Override
   protected AsyncExecutor createWorkerExecutor() {
-    return new ScheduledExecutorAsyncExecutor(cryptoExecutor);
+    return new ScheduledExecutorAsyncExecutor(cryptoExecutor());
+  }
+
+  @Override
+  protected AsyncExecutor createDecodeExecutor() {
+    return new ScheduledExecutorAsyncExecutor(decodeExecutorService());
   }
 
   /**
@@ -133,7 +136,32 @@ public class NettyPeerDiscoveryAgent extends PeerDiscoveryAgentV4 {
    */
   @Override
   protected Executor createDispatchExecutor() {
+    return timerScheduler();
+  }
+
+  private synchronized ScheduledExecutorService timerScheduler() {
+    if (timerScheduler == null) {
+      timerScheduler =
+          Executors.newSingleThreadScheduledExecutor(
+              (ThreadFactory) r -> new Thread(r, "discv4-timers"));
+    }
     return timerScheduler;
+  }
+
+  private synchronized ExecutorService cryptoExecutor() {
+    if (cryptoExecutor == null) {
+      cryptoExecutor =
+          Executors.newFixedThreadPool(2, (ThreadFactory) r -> new Thread(r, "discv4-crypto"));
+    }
+    return cryptoExecutor;
+  }
+
+  private synchronized ExecutorService decodeExecutorService() {
+    if (decodeExecutorService == null) {
+      decodeExecutorService =
+          Executors.newSingleThreadExecutor((ThreadFactory) r -> new Thread(r, "discv4-decode"));
+    }
+    return decodeExecutorService;
   }
 
   @Override
@@ -143,16 +171,42 @@ public class NettyPeerDiscoveryAgent extends PeerDiscoveryAgentV4 {
     }
     return transport
         .stop()
-        .whenComplete(
+        .handle(
             (v, ex) -> {
               if (ex != null) {
                 LOG.warn("Transport stop failed; continuing with executor shutdown", ex);
               }
-              controller.ifPresent(PeerDiscoveryController::stop);
-              timerScheduler.shutdownNow();
-              cryptoExecutor.shutdownNow();
+              return null;
+            })
+        .thenCompose(v -> stopControllerOnDispatchThread())
+        .whenComplete(
+            (v, ex) -> {
+              if (timerScheduler != null) {
+                timerScheduler.shutdownNow();
+              }
+              if (cryptoExecutor != null) {
+                cryptoExecutor.shutdownNow();
+              }
+              if (decodeExecutorService != null) {
+                decodeExecutorService.shutdownNow();
+              }
               isStopped = true;
             });
+  }
+
+  /**
+   * Runs {@link PeerDiscoveryController#stop()} on {@code timerScheduler} itself (rather than
+   * whatever thread completes {@code transport.stop()}), so it queues behind any timer/dispatch
+   * task already running there instead of racing it. If the agent was never started, {@code
+   * timerScheduler} was never created and there's nothing to stop.
+   */
+  private CompletableFuture<Void> stopControllerOnDispatchThread() {
+    final ScheduledExecutorService scheduler = timerScheduler;
+    if (scheduler == null) {
+      return CompletableFuture.completedFuture(null);
+    }
+    return CompletableFuture.runAsync(
+        () -> controller.ifPresent(PeerDiscoveryController::stop), scheduler);
   }
 
   @Override

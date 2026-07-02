@@ -14,9 +14,13 @@
  */
 package org.hyperledger.besu.ethereum.p2p.discovery.discv4.transport;
 
+import org.hyperledger.besu.ethereum.p2p.discovery.PeerDiscoveryServiceException;
 import org.hyperledger.besu.ethereum.p2p.discovery.discv4.V4Transport;
 
+import java.io.IOException;
+import java.net.BindException;
 import java.net.InetSocketAddress;
+import java.net.SocketException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -37,6 +41,7 @@ import io.netty.channel.socket.nio.NioDatagramChannel;
 import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
 import org.apache.tuweni.bytes.Bytes;
+import org.ethereum.beacon.discovery.util.DecodeException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,7 +51,10 @@ public final class NettyV4Transport implements V4Transport {
   private static final Logger LOG = LoggerFactory.getLogger(NettyV4Transport.class);
 
   private final InetSocketAddress bindAddress;
-  private final EventLoopGroup eventLoopGroup;
+
+  // Lazily created in start(), so a node that never starts this transport (e.g. discovery
+  // disabled) doesn't pay for a permanently-idle event-loop thread.
+  private volatile EventLoopGroup eventLoopGroup;
 
   private volatile NioDatagramChannel channel;
   private volatile InboundV4Handler inboundHandler;
@@ -56,9 +64,6 @@ public final class NettyV4Transport implements V4Transport {
 
   private NettyV4Transport(final InetSocketAddress bindAddress) {
     this.bindAddress = bindAddress;
-    this.eventLoopGroup =
-        new MultiThreadIoEventLoopGroup(
-            1, (ThreadFactory) r -> new Thread(r, "discv4-eventloop"), NioIoHandler.newFactory());
   }
 
   public static NettyV4Transport create(final InetSocketAddress bindAddress) {
@@ -76,6 +81,10 @@ public final class NettyV4Transport implements V4Transport {
       return CompletableFuture.failedFuture(
           new IllegalStateException("NettyV4Transport already started"));
     }
+
+    this.eventLoopGroup =
+        new MultiThreadIoEventLoopGroup(
+            1, (ThreadFactory) r -> new Thread(r, "discv4-eventloop"), NioIoHandler.newFactory());
 
     final CompletableFuture<InetSocketAddress> future = new CompletableFuture<>();
     final Bootstrap bootstrap = new Bootstrap();
@@ -101,7 +110,15 @@ public final class NettyV4Transport implements V4Transport {
         result -> {
           if (!result.isSuccess()) {
             eventLoopGroup.shutdownGracefully();
-            future.completeExceptionally(result.cause());
+            Throwable cause = result.cause();
+            if (cause instanceof BindException || cause instanceof SocketException) {
+              cause =
+                  new PeerDiscoveryServiceException(
+                      String.format(
+                          "Failed to bind Ethereum UDP discovery listener to %s:%d: %s",
+                          bindAddress.getHostString(), bindAddress.getPort(), cause.getMessage()));
+            }
+            future.completeExceptionally(cause);
             return;
           }
           this.channel = (NioDatagramChannel) bindFuture.channel();
@@ -140,11 +157,16 @@ public final class NettyV4Transport implements V4Transport {
     if (!stopped.compareAndSet(false, true)) {
       return CompletableFuture.completedFuture(null);
     }
+    final EventLoopGroup group = this.eventLoopGroup;
+    if (group == null) {
+      // start() was never called (e.g. discovery disabled) - nothing to stop.
+      return CompletableFuture.completedFuture(null);
+    }
     final NioDatagramChannel ch = this.channel;
     if (ch == null || !ch.isOpen()) {
-      return toFuture(eventLoopGroup.shutdownGracefully());
+      return toFuture(group.shutdownGracefully());
     }
-    return toFuture(ch.close()).thenCompose(v -> toFuture(eventLoopGroup.shutdownGracefully()));
+    return toFuture(ch.close()).thenCompose(v -> toFuture(group.shutdownGracefully()));
   }
 
   private static CompletableFuture<Void> toFuture(final io.netty.util.concurrent.Future<?> f) {
@@ -177,7 +199,11 @@ public final class NettyV4Transport implements V4Transport {
 
     @Override
     public void exceptionCaught(final ChannelHandlerContext ctx, final Throwable cause) {
-      LOG.debug("DiscV4 inbound handler exception", cause);
+      if (cause instanceof IOException || cause instanceof DecodeException) {
+        LOG.debug("DiscV4 inbound handler exception", cause);
+      } else {
+        LOG.error("DiscV4 inbound handler exception", cause);
+      }
     }
   }
 }

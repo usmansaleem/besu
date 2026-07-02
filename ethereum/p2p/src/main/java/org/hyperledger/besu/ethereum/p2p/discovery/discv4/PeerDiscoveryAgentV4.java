@@ -100,6 +100,12 @@ public abstract class PeerDiscoveryAgentV4 implements PeerDiscoveryAgent {
   // subclass constructor has run and createWorkerExecutor() is safe to call.
   private volatile PeerDiscoveryController.AsyncExecutor workerExecutor;
 
+  // Dedicated, single-threaded executor for inbound packet decode only (never shared with
+  // outbound packet signing). Preserves the arrival-order guarantee the Vert.x implementation
+  // provided via an ordered executeBlocking for decode, distinct from its unordered worker pool
+  // used for signing.
+  private volatile PeerDiscoveryController.AsyncExecutor decodeExecutor;
+
   // Single-threaded executor used to serialise all PeerDiscoveryController state mutation:
   // inbound packet handling and timer callbacks both run here. Restores the Vert.x event-loop
   // ordering guarantee the migration to Netty removed.
@@ -151,6 +157,8 @@ public abstract class PeerDiscoveryAgentV4 implements PeerDiscoveryAgent {
 
   protected abstract PeerDiscoveryController.AsyncExecutor createWorkerExecutor();
 
+  protected abstract PeerDiscoveryController.AsyncExecutor createDecodeExecutor();
+
   /**
    * Single-threaded executor that serialises {@link PeerDiscoveryController} state mutation.
    * Implementations must return the same single-threaded executor used to back {@link
@@ -165,6 +173,9 @@ public abstract class PeerDiscoveryAgentV4 implements PeerDiscoveryAgent {
   public void prepareHandlers() {
     if (workerExecutor == null) {
       workerExecutor = createWorkerExecutor();
+    }
+    if (decodeExecutor == null) {
+      decodeExecutor = createDecodeExecutor();
     }
     if (dispatchExecutor == null) {
       dispatchExecutor = createDispatchExecutor();
@@ -200,7 +211,7 @@ public abstract class PeerDiscoveryAgentV4 implements PeerDiscoveryAgent {
       LOG.trace("Discarding over-sized packet. Actual size (bytes): {}", data.size());
       return;
     }
-    workerExecutor
+    decodeExecutor
         .<Packet>execute(() -> packetDeserializer.decode(data))
         .whenCompleteAsync(
             (packet, err) -> {
@@ -291,6 +302,7 @@ public abstract class PeerDiscoveryAgentV4 implements PeerDiscoveryAgent {
         .outboundMessageHandler(this::handleOutgoingPacket)
         .timerUtil(createTimer())
         .workerExecutor(workerExecutor)
+        .dispatchExecutor(dispatchExecutor)
         .peerRequirement(PeerRequirement.combine(peerRequirements))
         .peerPermissions(peerPermissions)
         .metricsSystem(metricsSystem)

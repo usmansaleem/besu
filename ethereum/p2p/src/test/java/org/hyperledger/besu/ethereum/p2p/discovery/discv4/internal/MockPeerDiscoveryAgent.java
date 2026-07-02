@@ -55,8 +55,6 @@ public class MockPeerDiscoveryAgent extends PeerDiscoveryAgentV4 {
       final NatService natService,
       final ForkIdManager forkIdManager,
       final RlpxAgent rlpxAgent) {
-    // Chain through a private constructor that adds the selfRef holder (for MockV4Transport's
-    // back-reference to 'this'), then another that adds the single PacketPackage instance.
     this(
         nodeKey,
         config,
@@ -65,27 +63,6 @@ public class MockPeerDiscoveryAgent extends PeerDiscoveryAgentV4 {
         natService,
         forkIdManager,
         rlpxAgent,
-        new MockPeerDiscoveryAgent[1]);
-  }
-
-  private MockPeerDiscoveryAgent(
-      final NodeKey nodeKey,
-      final DiscoveryConfiguration config,
-      final PeerPermissions peerPermissions,
-      final Map<Bytes, MockPeerDiscoveryAgent> agentNetwork,
-      final NatService natService,
-      final ForkIdManager forkIdManager,
-      final RlpxAgent rlpxAgent,
-      final MockPeerDiscoveryAgent[] selfRef) {
-    this(
-        nodeKey,
-        config,
-        peerPermissions,
-        agentNetwork,
-        natService,
-        forkIdManager,
-        rlpxAgent,
-        selfRef,
         DaggerPacketPackage.create());
   }
 
@@ -97,7 +74,6 @@ public class MockPeerDiscoveryAgent extends PeerDiscoveryAgentV4 {
       final NatService natService,
       final ForkIdManager forkIdManager,
       final RlpxAgent rlpxAgent,
-      final MockPeerDiscoveryAgent[] selfRef,
       final PacketPackage packetPackage) {
     super(
         nodeKey,
@@ -109,10 +85,13 @@ public class MockPeerDiscoveryAgent extends PeerDiscoveryAgentV4 {
             new InMemoryKeyValueStorageProvider(), nodeKey, forkIdManager, natService),
         rlpxAgent,
         new PeerTable(nodeKey.getPublicKey().getEncodedBytes()),
-        new MockV4Transport(selfRef, agentNetwork, config),
+        new MockV4Transport(agentNetwork, config),
         packetPackage.packetSerializer(),
         packetPackage.packetDeserializer());
-    selfRef[0] = this;
+    // Post-construction attach, mirroring V4Transport.setInboundHandler(...) /
+    // PeerDiscoveryAgentV4.prepareHandlers() — 'this' isn't available until after super()
+    // returns, so MockV4Transport can't be handed the owning agent at construction time.
+    ((MockV4Transport) transport).setOwner(this);
   }
 
   public void processIncomingPacket(final MockPeerDiscoveryAgent fromAgent, final Packet packet) {
@@ -141,6 +120,11 @@ public class MockPeerDiscoveryAgent extends PeerDiscoveryAgentV4 {
 
   @Override
   protected PeerDiscoveryController.AsyncExecutor createWorkerExecutor() {
+    return new BlockingAsyncExecutor();
+  }
+
+  @Override
+  protected PeerDiscoveryController.AsyncExecutor createDecodeExecutor() {
     return new BlockingAsyncExecutor();
   }
 
@@ -194,18 +178,20 @@ public class MockPeerDiscoveryAgent extends PeerDiscoveryAgentV4 {
 
   /** Test-only V4Transport that routes outbound packets directly to the target mock agent. */
   private static class MockV4Transport implements V4Transport {
-    private final MockPeerDiscoveryAgent[] selfRef;
     private final Map<Bytes, MockPeerDiscoveryAgent> agentNetwork;
     private final InetSocketAddress listenAddress;
+    private MockPeerDiscoveryAgent owner;
     private boolean isRunning = false;
 
     MockV4Transport(
-        final MockPeerDiscoveryAgent[] selfRef,
         final Map<Bytes, MockPeerDiscoveryAgent> agentNetwork,
         final DiscoveryConfiguration config) {
-      this.selfRef = selfRef;
       this.agentNetwork = agentNetwork;
       this.listenAddress = new InetSocketAddress(config.getBindHost(), config.getBindPort());
+    }
+
+    void setOwner(final MockPeerDiscoveryAgent owner) {
+      this.owner = owner;
     }
 
     @Override
@@ -223,7 +209,7 @@ public class MockPeerDiscoveryAgent extends PeerDiscoveryAgentV4 {
     @Override
     public CompletableFuture<Void> send(final InetSocketAddress recipient, final Bytes data) {
       final CompletableFuture<Void> result = new CompletableFuture<>();
-      final MockPeerDiscoveryAgent fromAgent = selfRef[0];
+      final MockPeerDiscoveryAgent fromAgent = owner;
 
       if (!isRunning) {
         result.completeExceptionally(
@@ -231,9 +217,12 @@ public class MockPeerDiscoveryAgent extends PeerDiscoveryAgentV4 {
         return result;
       }
 
-      // Locate the target agent by matching its advertised endpoint address
+      // Locate the target agent by matching its advertised endpoint address. Stopped agents are
+      // excluded so a replaced/restarted agent's stale map entry can't be matched instead of the
+      // live agent listening at the same address.
       final MockPeerDiscoveryAgent toAgent =
           agentNetwork.values().stream()
+              .filter(a -> !a.isStopped())
               .filter(a -> a.getAdvertisedPeer().isPresent())
               .filter(
                   a -> {

@@ -67,7 +67,8 @@ public class PacketDeserializerTest {
 
   @BeforeEach
   public void beforeTest() {
-    PingPacketDataRlpReader pingPacketDataRlpReader = new PingPacketDataRlpReader();
+    PingPacketDataRlpReader pingPacketDataRlpReader =
+        new PingPacketDataRlpReader(new ExpiryValidator(clock));
     PongPacketDataRlpReader pongPacketDataRlpReader =
         new PongPacketDataRlpReader(new PongPacketDataFactory(new ExpiryValidator(clock), clock));
     FindNeighborsPacketDataRlpReader findNeighborsPacketDataRlpReader =

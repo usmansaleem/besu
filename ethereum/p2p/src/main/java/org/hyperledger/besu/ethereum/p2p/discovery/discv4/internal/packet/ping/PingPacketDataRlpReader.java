@@ -17,6 +17,7 @@ package org.hyperledger.besu.ethereum.p2p.discovery.discv4.internal.packet.ping;
 import org.hyperledger.besu.ethereum.p2p.discovery.discv4.Endpoint;
 import org.hyperledger.besu.ethereum.p2p.discovery.discv4.internal.DevP2PException;
 import org.hyperledger.besu.ethereum.p2p.discovery.discv4.internal.packet.PacketDataDeserializer;
+import org.hyperledger.besu.ethereum.p2p.discovery.discv4.internal.packet.validation.ExpiryValidator;
 import org.hyperledger.besu.ethereum.rlp.MalformedRLPInputException;
 import org.hyperledger.besu.ethereum.rlp.RLPInput;
 
@@ -32,7 +33,11 @@ import org.slf4j.LoggerFactory;
 public class PingPacketDataRlpReader implements PacketDataDeserializer<PingPacketData> {
   private static final Logger LOG = LoggerFactory.getLogger(PingPacketDataRlpReader.class);
 
-  public @Inject PingPacketDataRlpReader() {}
+  private final ExpiryValidator expiryValidator;
+
+  public @Inject PingPacketDataRlpReader(final ExpiryValidator expiryValidator) {
+    this.expiryValidator = expiryValidator;
+  }
 
   @Override
   public PingPacketData readFrom(final RLPInput in) {
@@ -66,6 +71,8 @@ public class PingPacketDataRlpReader implements PacketDataDeserializer<PingPacke
     in.leaveListLenient();
     // Per EIP-8, a malformed to field must not prevent packet processing.
     // The to field is unused when constructing our PONG; we always respond to the actual sender.
+    // Expiry is still enforced: an expired PING must not reach the controller.
+    expiryValidator.validate(expiration);
     return new PingPacketData(from, to, expiration, enrSeq);
   }
 }

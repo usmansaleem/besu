@@ -58,6 +58,7 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -150,6 +151,7 @@ public class PeerDiscoveryController {
   private RetryDelayFunction retryDelayFunction = RetryDelayFunction.linear(1.5, 2000, 60000);
 
   private final AsyncExecutor workerExecutor;
+  private final Executor dispatchExecutor;
 
   private final PeerRequirement peerRequirement;
   private final long tableRefreshIntervalMs;
@@ -178,6 +180,7 @@ public class PeerDiscoveryController {
       final OutboundMessageHandler outboundMessageHandler,
       final TimerUtil timerUtil,
       final AsyncExecutor workerExecutor,
+      final Executor dispatchExecutor,
       final long tableRefreshIntervalMs,
       final long cleanPeerTableIntervalMs,
       final PeerRequirement peerRequirement,
@@ -200,6 +203,7 @@ public class PeerDiscoveryController {
     this.bootstrapNodes = bootstrapNodes;
     this.peerTable = peerTable;
     this.workerExecutor = workerExecutor;
+    this.dispatchExecutor = dispatchExecutor;
     this.tableRefreshIntervalMs = tableRefreshIntervalMs;
     this.cleanPeerTableIntervalMs = cleanPeerTableIntervalMs;
     this.peerRequirement = peerRequirement;
@@ -659,7 +663,7 @@ public class PeerDiscoveryController {
     // So ensure the work is done on a worker thread to avoid blocking the vertx event thread.
     workerExecutor
         .execute(() -> packetFactory.create(type, data, nodeKey))
-        .thenAccept(handler)
+        .thenAcceptAsync(handler, dispatchExecutor)
         .exceptionally(
             error -> {
               LOG.error("Error while creating packet", error);
@@ -891,6 +895,7 @@ public class PeerDiscoveryController {
     private DiscoveryPeerV4 localPeer;
     private TimerUtil timerUtil;
     private AsyncExecutor workerExecutor;
+    private Executor dispatchExecutor = Runnable::run;
     private MetricsSystem metricsSystem;
     private boolean filterOnEnrForkId;
 
@@ -925,6 +930,7 @@ public class PeerDiscoveryController {
           outboundMessageHandler,
           timerUtil,
           workerExecutor,
+          dispatchExecutor,
           tableRefreshIntervalMs,
           cleanPeerTableIntervalMs,
           peerRequirement,
@@ -995,6 +1001,18 @@ public class PeerDiscoveryController {
     public Builder workerExecutor(final AsyncExecutor workerExecutor) {
       checkNotNull(workerExecutor);
       this.workerExecutor = workerExecutor;
+      return this;
+    }
+
+    /**
+     * The executor that all inbound-packet matching runs on. Defaults to direct/same-thread
+     * execution. Production callers should pass the same single-threaded executor used to dispatch
+     * inbound packets, so that {@link #createPacket}'s post-signing continuation (which mutates
+     * {@link PeerInteractionState}) can't race with inbound matching.
+     */
+    public Builder dispatchExecutor(final Executor dispatchExecutor) {
+      checkNotNull(dispatchExecutor);
+      this.dispatchExecutor = dispatchExecutor;
       return this;
     }
 
